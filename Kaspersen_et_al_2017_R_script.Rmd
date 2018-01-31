@@ -1,0 +1,608 @@
+---
+title: "Occurrence of quinolone resistant *E. coli* originating from different animal species in Norway R Script"
+output:
+  pdf_document: default
+  html_notebook: default
+  html_document: default
+---
+
+```{r setup, include=TRUE, message=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, include = TRUE)
+```
+
+# Information
+This script prepares all tables and figures and calculates necessary statistics from the relevant datasets.
+
+The authors would like to thank the Stack Overflow community at www.stackoverflow.com for their help
+with this script.
+
+# Packages
+```{r}
+library(rlang)
+library(tidyverse)
+library(broom)
+library(pander)
+library(ggsci)
+```
+
+#Imports datasets and sets fonts used for figures
+
+```{r}
+# Main dataset
+Dataset1 <-read.table(paste0("Dataset1.txt"),header = T, sep="\t",
+                             stringsAsFactors = FALSE)
+
+# Dataset for isolates with municipality information
+Dataset2 <-read.table(paste0("Dataset2.txt"),header = T, sep="\t",
+                             stringsAsFactors = FALSE)
+
+# Sets fonts used in figures
+windowsFonts(Times=windowsFont("TT Times New Roman"))
+```
+
+\newpage
+# Functions
+## Functions used in this analysis
+
+```{r}
+# Calculates 95 % confidence intervals
+get_binCI <- function(x, n) as.numeric(setNames(binom.test(x,n)$conf.int*100,
+                                                c("lwr", "upr")))
+
+# Renames column values to full species names
+fullnames<-function(dataset, ..., originals=c("can","chi","chila","bov",
+                                   "fox","avi","sau","equ",
+                                   "ren","pig","tur"),
+                     newnames=c("Dogs","Broilers","Layers",
+                                "Cattle","Red Foxes","Wild Birds",
+                                "Sheep","Horses","Reindeer",
+                                "Pigs","Turkeys")){
+  names(newnames) = originals
+  dots = quos(...)
+  dataset %>% 
+    mutate_at(vars(!!! dots), as.character) %>%
+    mutate_at(vars(!!! dots), funs(newnames[.])) %>%
+    data.frame(row.names = NULL)
+}
+
+
+# MIC distribution tables, per MIC per year
+MIC_dist <- function(dataset, ...){
+  dataset %>%
+  count(..., year) %>%
+  mutate(year = as.numeric(year)) %>%
+  group_by(year) %>%
+  mutate(perc_MIC = n/sum(n)*100) %>%
+  spread(..., perc_MIC) %>%
+  aggregate(., by = list(.$year), na.rm = TRUE, FUN = sum) %>%
+  select(-year) %>%
+  rename(year = Group.1)
+}
+
+```
+\newpage
+#MIC distribution tables
+
+```{r kable}
+# Table for CIP MIC distribution per year
+MIC_CIP_year <- MIC_dist(Dataset1, CIP)
+MIC_CIP_year <- MIC_CIP_year %>%
+  mutate(sum_res = rowSums(.[6:11]))
+MIC_CIP_year[,2:14] <- round(MIC_CIP_year[,2:14],1)
+pander(MIC_CIP_year)
+
+# Table for NAL MIC distribution per year
+MIC_NAL_year <- MIC_dist(Dataset1, NAL)
+MIC_NAL_year <- MIC_NAL_year %>%
+  mutate(sum_res = rowSums(.[7:10]))
+MIC_NAL_year[,2:12] <- round(MIC_NAL_year[,2:12],1)
+pander(MIC_NAL_year)
+
+# Table for percent quinolone resistance per year, CI and 
+# number of isolates for CIP MICs
+perc_year_CIP <- Dataset1 %>%
+  mutate(CIP_res = ifelse(CIP > 0.06,
+                          "Resistant",
+                          "NonResistant")) %>%
+  count(CIP_res, year) %>%
+  group_by(year) %>%
+  spread(CIP_res, n , fill = 0) %>%
+  mutate(n = Resistant + NonResistant,
+         perc_res = Resistant/n*100,
+         lwr = get_binCI(Resistant, n)[1],
+         upr = get_binCI(Resistant, n)[2]) %>%
+  select(year,Resistant,n,perc_res,lwr,upr) %>%
+  rename(Year=year,
+         "Resistance(%)"=perc_res,
+         "95 % CI Low"=lwr,
+         "95 % CI High"=upr)
+
+perc_year_CIP[,4:6] <- round(perc_year_CIP[,4:6],1)
+
+pander(perc_year_CIP)
+
+# Table for percent quinolone resistance per year, CI and 
+# number of isolates for NAL MICs
+perc_year_NAL <- Dataset1 %>%
+  mutate(NAL_res = ifelse(NAL > 16,
+                          "Resistant",
+                          "NonResistant")) %>%
+  count(NAL_res, year) %>%
+  group_by(year) %>%
+  spread(NAL_res, n , fill = 0) %>%
+  mutate(n = Resistant + NonResistant,
+         perc_res = Resistant/n*100,
+         lwr = get_binCI(Resistant, n)[1],
+         upr = get_binCI(Resistant, n)[2]) %>%
+  select(year,Resistant,n,perc_res,lwr,upr) %>%
+  rename(Year=year,
+         "Resistance(%)"=perc_res,
+         "95 % CI Low"=lwr,
+         "95 % CI High"=upr)
+
+perc_year_NAL[,4:6] <- round(perc_year_NAL[,4:6],1)
+
+pander(perc_year_NAL)
+
+# MIC distribution for various antibiotics
+# (only for the resistant isolates)
+order_vector <- c("TET","CHL","AMP","CTX",
+                  "SMX","TMP","GEN","CIP","NAL")
+
+MIC_dist_AB <- Dataset1 %>%
+  filter(quin_res==1) %>%
+  select(.,AMP,TET,CHL,SMX,TMP,GEN,CTX,CIP,NAL) %>%
+  gather() %>%
+  group_by(key) %>%
+  mutate(n1 = n()) %>%
+  count(value,n1) %>%
+  mutate(perc = n/sum(n)*100) %>%
+  select(-n,n=n1) %>%
+  spread(value,perc,fill=0) %>%
+  ungroup() %>%
+  slice(match(order_vector, key)) %>%
+  rename(Antimicrobial = key,
+         ">256" = `2048`)
+
+MIC_dist_AB[,3:17] <- round(MIC_dist_AB[,3:17],1)
+
+pander(MIC_dist_AB)
+
+# Table for percent resistance per antibiotic, CI, 
+# and number of isolates for the QREC isolates
+perc_AB <- Dataset1 %>%
+  filter(quin_res == 1) %>%
+  select(amp_res, tet_res, chl_res, smx_res, 
+         tmp_res, gen_res, ctx_res, cip_res, nal_res) %>%
+  gather() %>%
+  group_by(key) %>%
+  mutate(n1 = n()) %>%
+  count(value, n1) %>%
+  mutate(value = ifelse(value == 1,
+                        "Resistant",
+                        "NonResistant"),
+         Antibiotic = key,
+         Antibiotic = toupper(gsub("_res", "", key))) %>%
+  spread(value, n , fill = 0) %>%
+  rename(n = n1) %>%
+  mutate(perc_res = Resistant/n*100,
+         lwr = get_binCI(Resistant, n)[1],
+         upr = get_binCI(Resistant, n)[2]) %>%
+  ungroup() %>%
+  select(Antibiotic,Resistant,n,perc_res,lwr,upr) %>%
+  rename("Resistance(%)"=perc_res,
+         "95 % CI Low"=lwr,
+         "95 % CI High"=upr) %>%
+  slice(match(order_vector, Antibiotic))
+
+perc_AB[,4:6] <- round(perc_AB[,4:6],1)
+
+pander(perc_AB)
+
+# MIC values for the two QREC isolates with sub ECOFF
+# NAL MIC
+high_CIP_low_NAL <- Dataset1 %>%
+  filter(CIP > 0.12 & NAL < 16) %>%
+  select(CIP, NAL)
+
+pander(high_CIP_low_NAL)
+
+# MIC values for the two QREC isolates with sub ECOFF
+# CIP MIC
+low_CIP_high_NAL <- Dataset1 %>%
+  filter(CIP < 0.12 & NAL > 16) %>%
+  select(CIP, NAL)
+
+pander(low_CIP_high_NAL)
+```
+\newpage
+#Detection of resistance to multiple antimicrobials
+
+```{r}
+# Creates a table with number of co-resistant 
+# isolates and percentage of the resistant isolates
+multiResTable <- Dataset1 %>%
+  count(quin_res,amp_res,tet_res,chl_res,
+        smx_res,tmp_res,gen_res,ctx_res) %>%
+  filter(quin_res == 1) %>%
+  mutate(multi_res = rowSums(.[1:8])) %>%
+  select(n,multi_res) %>%
+  aggregate(n~multi_res,.,sum) %>%
+  mutate(pIso = n/sum(n)*100) %>%
+  rename("No. of Antimicrobials"=multi_res,
+         "No. of Isolates"=n, "Percent of Isolates"=pIso)
+
+pander(multiResTable)
+```
+\newpage
+#CIP/NAL MIC comparisons
+
+```{r}
+# Prepares the table with counts of all combinations
+# of CIP/NAL MICs for the QREC isolates
+MIC_CIP_NAL_comp <- Dataset1 %>%
+  filter(quin_res == 1) %>%
+  count(CIP,NAL) %>%
+  mutate(CIP = ifelse(CIP == 16, ">8",
+               ifelse(CIP == 0.016, 0.015, CIP)),
+         NAL = ifelse(NAL == 256, ">128",NAL))
+
+# Creates a plot of the table above
+ggplot(MIC_CIP_NAL_comp,aes(factor(CIP,levels=unique(CIP)),
+                                factor(NAL,levels=c("1","2","4",
+                                                    "8","16","32",
+                                                    "64","128",
+                                                    ">128")),
+                                    size=factor(n)))+
+  geom_point()+
+  geom_vline(xintercept = 2.5, color = "#999999", 
+             size = 0.3, alpha = 0.8)+
+  geom_hline(yintercept = 2.5, color = "#999999", 
+             size = 0.3, alpha = 0.8)+
+  geom_rect(data = data.frame(x = c(1:8)), 
+            aes(xmin = x - 0.5, xmax = x + 0.5,
+                ymin = 0.42, ymax = 0.5),
+            col = "#666666",
+            fill = NA,
+            inherit.aes = F)+
+  geom_rect(data = data.frame(y = c(1:6)), 
+            aes(xmin = 0.42, xmax = 0.5,
+                ymin = y - 0.5, ymax = y + 0.5),
+            col = "#666666",
+            fill = NA,
+            inherit.aes = F)+
+  theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        legend.key = element_blank(),
+        text = element_text(family="Times"))+
+  labs(x="CIP MIC Levels",
+       y="NAL MIC Levels",
+       size="Number of\nisolates")
+```
+\newpage
+
+#Species data
+
+##Creates a table with percent resistance per species, with confidence intervals
+
+```{r}
+# Creates a table with information on the species
+species_information <- Dataset1 %>%
+  count(NORMart,quin_res) %>%
+  mutate(quin_res = ifelse(quin_res == 0,
+                           "NonResistant",
+                           "Resistant")) %>%
+  spread(quin_res,n) %>%
+  mutate(Resistant = ifelse(is.na(Resistant),0, Resistant),
+         n = NonResistant + Resistant,
+         pRes = Resistant/n*100) %>%
+  group_by(Resistant, n) %>%
+  mutate(lwr = get_binCI(Resistant, n)[1],
+         upr = get_binCI(Resistant, n)[2]) %>%
+  fullnames(., NORMart) %>%
+  select(NORMart, n,Resistant, pRes,lwr,upr) %>%
+  rename(Species = NORMart, "Resistance (%)" = pRes,
+         "95 % CI Low" = lwr, "95 % CI High" = upr)
+species_information[,4:6] <- round(species_information[,4:6],1)
+pander(species_information)
+
+```
+\newpage
+
+#Broiler data
+
+##Creates a table with information about resistance levels in broilers
+##for each year they are present
+
+```{r}
+# Creates a table with information on broilers for each year
+broiler_information <- Dataset1 %>%
+  filter(NORMart == "chi") %>%
+  count(quin_res, year) %>%
+  mutate(quin_res = ifelse(quin_res == 0,
+                           "NonResistant",
+                           "Resistant")) %>%
+  spread(quin_res, n) %>%
+  mutate(n = NonResistant + Resistant,
+         pRes = Resistant/n*100) %>%
+  group_by(Resistant, n) %>%
+  mutate(lwr = get_binCI(Resistant, n)[1],
+         upr = get_binCI(Resistant, n)[2]) %>%
+  select(year, n, Resistant, pRes, lwr, upr)
+broiler_information[,4:6] <- round(broiler_information[,4:6],1)
+```
+
+#Occurrence of QREC in broilers with confidence intervals
+
+##This plot presents the data in the table above
+
+```{r}
+ggplot(broiler_information,aes(factor(year),pRes))+
+  geom_col(width = 0.85)+
+  geom_errorbar(aes(ymax = upr, ymin = lwr), 
+                width = 0.4, 
+                alpha = 0.5)+
+  labs(x = "Year",
+       y = "Occurrence of QREC (%)")+
+  theme(panel.background = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        axis.line = element_line(color = "black", size = 0.1),
+        axis.title.x = element_text(color = "#333333"),
+        axis.title.y = element_text(color = "#333333"),
+        text = element_text(size = 15, family = "Times"))+
+  scale_x_discrete(labels = c("2006\nn = 190","2009\nn = 162",
+                              "2011\nn = 208","2012\nn = 113",
+                              "2014\nn = 205","2016\nn = 181"))
+```
+\newpage
+
+#Percent resistance per species per pop. density category
+
+##This creates a table where percent relative resistance per species
+##per population density category is presented.
+
+```{r}
+species_and_pop_density<- Dataset2 %>%
+  mutate(quin_res = ifelse(quin_res == 0,
+                           "NonResistant",
+                           "Resistant")) %>%
+  count(NORMart.x, kategori, quin_res) %>%
+  spread(quin_res, n, fill = 0) %>%
+  mutate(PercentResistant = 
+         Resistant / (NonResistant + Resistant)*100) %>%
+  mutate(test = map2(Resistant, NonResistant, ~ 
+                       binom.test(.x, .x + .y) %>% 
+                       tidy())) %>%
+  unnest() %>%
+  transmute(Species = NORMart.x, Pop.density = kategori, 
+            PercentResistant, CI_low = conf.low * 100,
+            CI_high = conf.high * 100, 
+            TotalSamples = Resistant + NonResistant) %>%
+  complete(Species, Pop.density) %>%
+  fullnames(.,Species) %>%
+  rename("Density" = Pop.density,
+         "Resistance(%)"=PercentResistant,
+         "95 % CI Low" = CI_low, 
+         "95 % CI High" = CI_high,
+         "Total Samples" = TotalSamples) 
+
+species_and_pop_density[is.na(species_and_pop_density)] <- 0
+species_and_pop_density[,3:5] <- round(species_and_pop_density[,3:5],1)
+
+pander(species_and_pop_density)
+
+```
+\newpage
+
+# Percent resistance per year per animal species
+```{r}
+pRes_year_species <- Dataset1 %>%
+  count(NORMart, quin_res, year) %>%
+  mutate(quin_res = ifelse(quin_res == 0, "Nonresistant", "Resistant")) %>%
+  spread(quin_res, n, fill = 0) %>%
+  mutate(n = Resistant + Nonresistant,
+         pRes = Resistant/n*100) %>%
+  group_by(year) %>%
+  mutate(mean_pRes = mean(pRes)) %>%
+  ungroup() %>%
+  fullnames(., NORMart)
+
+
+ggplot(pRes_year_species, aes(factor(year), pRes))+
+  geom_point(shape = 21, aes(fill = NORMart, size = n))+
+  geom_crossbar(aes(factor(year),
+                    mean_pRes,
+                    ymin = mean_pRes,
+                    ymax = mean_pRes),
+                fatten = 0.5,
+                color = "black")+
+  scale_fill_manual(values = c('#a6cee3','#1f78b4','#b2df8a',
+                                  '#33a02c','#fb9a99','#e31a1c',
+                                  '#fdbf6f','#ff7f00','#cab2d6',
+                                  '#6a3d9a','#ffff99'))+
+  theme_classic()+
+  theme(legend.key.size = unit(5, "point"),
+        legend.title = element_blank())+
+  labs(x = "Years",
+       y = "Percent (%) occurrence of QREC")+
+  guides(fill = guide_legend(title = "Animal\nSpecies", override.aes = list(size = 4)),
+         size = guide_legend(title = "n"))
+
+```
+
+\newpage
+
+#Statistics
+
+##Chi squared tests for total QREC occurrence each year for all species
+
+```{r}
+TotResYearChisq <- Dataset1 %>%
+  mutate(quin_res = ifelse(quin_res == 1,
+                           "Resistant",
+                           "NonResistant")) %>%
+  count(year, quin_res) %>%
+  spread(quin_res, n, fill = 0)
+
+TotResYearChisq_values <- TotResYearChisq %>%
+  slice(expand.grid(1:11, 1:11) %>% rev %>% 
+          filter(Var2 < Var1) %>% t) %>%
+  mutate(test = rep(1:(n()/2), each = 2)) %>%
+  group_by(test) %>%
+  do(data_frame(test = first(.$test),
+                year1 = first(.$year),
+                year2 = last(.$year),
+                data = list(matrix(c(.$NonResistant,
+                                     .$Resistant),
+                                   ncol = 2)))) %>%
+  mutate(chi_test = map(data, chisq.test, correct = FALSE)) %>%
+  mutate(p.value = map_dbl(chi_test, "p.value")) %>%
+  ungroup() %>%
+  select(year1, year2, p.value) %>%
+  mutate(Significance = ifelse(p.value < 0.05,
+                               "Significant",
+                               "Not significant")) %>%
+  rename("Year One"="year1","Year Two"="year2","p-Value"="p.value")
+
+TotResYearChisq_values[,3] <- round(TotResYearChisq_values[,3],3)
+
+pander(TotResYearChisq_values)
+
+```
+\newpage
+
+## Chi squared tests for each species compared to one another
+
+```{r}
+#Prepares a table for the chi squared tests
+species_table <- Dataset1 %>%
+  count(NORMart, quin_res) %>%
+  mutate(quin_res = ifelse(quin_res == 0,
+                           "NonResistant",
+                           "Resistant")) %>%
+  spread(quin_res, n, fill = 0)
+
+species_chisq <- species_table %>%
+  slice(expand.grid(1:11, 1:11) %>%
+          rev %>%
+          filter(Var2 < Var1) %>% 
+          t) %>%
+  mutate(test = rep(1:(n()/2), each = 2)) %>%
+  group_by(test) %>%
+  do(data_frame(test = first(.$test),
+                species1 = first(.$NORMart),
+                species2 = last(.$NORMart),
+                data = list(matrix(c(.$NonResistant,
+                                     .$Resistant),
+                                   ncol = 2)))) %>%
+  mutate(chi_test = map(data, chisq.test, correct = FALSE)) %>%
+  mutate(p.value = map_dbl(chi_test, "p.value")) %>%
+  ungroup() %>%
+  select(species1, species2, p.value) %>%
+  fullnames(., species1, species2) %>%
+  mutate(Significance = ifelse(p.value < 0.05,
+                               "Significant",
+                               "Not significant")) %>%
+  rename("Species One"=species1,
+         "Species Two"=species2,
+         "p-Value"="p.value")
+
+pander(species_chisq)
+```
+\newpage
+
+## Chi squared test for broilers each year
+
+```{r}
+broilers <- Dataset1 %>%
+  filter(NORMart == "chi") %>%
+  count(NORMart, quin_res, year) %>%
+  mutate(quin_res = ifelse(quin_res == 0,
+                           "NonResistant",
+                           "Resistant")) %>%
+  spread(quin_res, n, fill = 0)
+  
+broiler_chisq <- broilers %>%
+  slice(expand.grid(1:6, 1:6) %>% rev %>% 
+          filter(Var2 < Var1) %>% t) %>%
+  mutate(test = rep(1:(n()/2), each = 2)) %>%
+  group_by(test) %>%
+  do(data_frame(test = first(.$test),
+                year1 = first(.$year),
+                year2 = last(.$year),
+                data = list(matrix(c(.$NonResistant,
+                                     .$Resistant),
+                                   ncol = 2)))) %>%
+  mutate(chi_test = map(data, chisq.test, correct = FALSE)) %>%
+  mutate(p.value = map_dbl(chi_test, "p.value")) %>%
+  ungroup() %>%
+  select(year1, year2, p.value) %>%
+  mutate(Significance = ifelse(p.value < 0.05,
+                               "Significant",
+                               "Not significant")) %>%
+  rename("Year One"="year1",
+         "Year Two"="year2",
+         "p-Value"="p.value")
+
+pander(broiler_chisq)
+```
+\newpage
+
+## Chi squared test for broilers and wild birds pooled,
+## against the rest of the species
+
+```{r}
+chisq_avichi_rest <- matrix(c(1317,3186,45,20), nrow = 2)
+chisq_avichi <- chisq.test(chisq_avichi_rest, correct = F)
+pander(chisq_avichi)
+```
+
+## Chi squared tests on same species for each population density category
+
+```{r}
+#Prepares a table for the chi squared tests
+category_table <- Dataset2 %>%
+  count(NORMart.x, quin_res, kategori) %>%
+  mutate(quin_res = ifelse(quin_res == 0,
+                           "NonResistant",
+                           "Resistant")) %>%
+  spread(quin_res, n, fill = 0)
+
+pop_density_species_chisq <- category_table %>%
+  group_by(NORMart.x) %>%
+  slice(c(1, 2, 1, 3, 2, 3)) %>%
+  mutate(test = rep(1:(n()/2), each = 2)) %>%
+  group_by(NORMart.x, test) %>%
+  do(data_frame(NORMart.x = first(.$NORMart.x),
+                test = first(.$test[1]),
+                category1 = first(.$kategori),
+                category2 = last(.$kategori),
+                data = list(matrix(c(.$NonResistant,
+                                     .$Resistant),
+                                   ncol = 2)))) %>%
+  mutate(chi_test = map(data, chisq.test, correct = FALSE)) %>%
+  mutate(p.value = map_dbl(chi_test, "p.value")) %>%
+  ungroup() %>%
+  select(NORMart.x, category1, category2, p.value) %>%
+  fullnames(.,NORMart.x) %>%
+  mutate(significance = ifelse(p.value < 0.05,
+                               "Significant",
+                               "Not significant")) %>%
+  rename(Species = "NORMart.x",
+         "Density One"="category1",
+         "Density Two"="category2")
+
+pander(pop_density_species_chisq)
+```
+
+## Correlation test for Ciprofloxacin vs. Nalidixic acid
+
+```{r}
+cor_test <- cor.test(Dataset1$CIP, Dataset1$NAL)
+pander(cor_test)
+
+```
+
